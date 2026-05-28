@@ -1,4 +1,3 @@
-use itertools::Itertools;
 use pg_query::protobuf::Integer;
 use pg_query::protobuf::{a_const::Val, Node, SelectStmt, String as PgQueryString};
 use pg_query::NodeEnum;
@@ -171,12 +170,7 @@ impl Aggregate {
                             "variance" | "var_samp" => Some(AggregateFunction::VarSamp),
                             "var_pop" => Some(AggregateFunction::VarPop),
                             fname => {
-                                if schema
-                                    .aggregate_functions
-                                    .iter()
-                                    .map(|s| s.as_ref())
-                                    .contains(fname)
-                                {
+                                if schema.aggregate_functions.contains(fname) {
                                     return Err(Error::UnsupportedAggregate(String::from(fname)));
                                 } else {
                                     None

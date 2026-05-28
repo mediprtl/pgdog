@@ -64,7 +64,9 @@ impl Schema {
             .fetch_all::<String>(
                 "SELECT DISTINCT proname FROM pg_proc INNER JOIN pg_aggregate ON oid = aggfnoid",
             )
-            .await?;
+            .await?
+            .into_iter()
+            .collect();
 
         let inner = SchemaInner {
             search_path,
@@ -107,7 +109,7 @@ impl Schema {
             inner: StatsSchema::new(SchemaInner {
                 search_path,
                 relations: nested,
-                aggregate_functions,
+                aggregate_functions: aggregate_functions.into_iter().collect(),
             }),
         }
     }
