@@ -803,7 +803,7 @@ mod test {
     }
 
     fn parse(stmt: &str) -> Aggregate {
-        Aggregate::parse(&select(stmt))
+        Aggregate::parse(&select(stmt), &Default::default()).unwrap()
     }
 
     #[test]

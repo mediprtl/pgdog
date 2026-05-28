@@ -37,4 +37,7 @@ pub enum Error {
 
     #[error("missing AST on request")]
     MissingAst,
+
+    #[error("aggregate function {0} is not yet supported")]
+    UnsupportedAggregate(String),
 }

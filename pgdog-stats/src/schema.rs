@@ -134,6 +134,7 @@ impl Relation {
 pub struct SchemaInner {
     pub search_path: Vec<String>,
     pub relations: Relations,
+    pub aggregate_functions: Vec<String>,
 }
 
 impl Hash for SchemaInner {
