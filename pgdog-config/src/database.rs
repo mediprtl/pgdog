@@ -322,6 +322,7 @@ impl DerefMut for EnumeratedDatabase {
 #[cfg(test)]
 mod tests {
     use super::LoadBalancingStrategy;
+    use serde::Deserialize;
     use std::str::FromStr;
 
     #[test]
@@ -342,7 +343,7 @@ mod tests {
 
     #[test]
     fn test_client_affinity_toml_snake_case() {
-        #[derive(serde::Deserialize)]
+        #[derive(Deserialize)]
         struct Wrapper {
             strategy: LoadBalancingStrategy,
         }
