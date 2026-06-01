@@ -1264,7 +1264,7 @@
           "const": "weighted_round_robin"
         },
         {
-          "description": "Pin each client to a single replica for its lifetime; fail over and re-pin if it is banned.",
+          "description": "Pin each client to a single replica for its lifetime (connections sharing a `pgdog.replica_affinity_key` pin together); fail over and re-pin if it is banned.",
           "type": "string",
           "const": "client_affinity"
         }

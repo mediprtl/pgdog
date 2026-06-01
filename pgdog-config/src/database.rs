@@ -52,7 +52,7 @@ pub enum LoadBalancingStrategy {
     LeastActiveConnections,
     /// Weighted round-robin, distributing requests proportionally to configured weights.
     WeightedRoundRobin,
-    /// Pin each client to a single replica for its lifetime; fail over and re-pin if it is banned.
+    /// Pin each client to a single replica for its lifetime (connections sharing a `pgdog.replica_affinity_key` pin together); fail over and re-pin if it is banned.
     ClientAffinity,
 }
 

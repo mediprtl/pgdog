@@ -1,6 +1,9 @@
 //! Sticky settings for clients that override
 //! default routing behavior determined by the query parser.
 
+use std::hash::{Hash, Hasher};
+
+use fnv::FnvHasher;
 use pgdog_config::Role;
 use rand::{rng, Rng};
 
@@ -53,12 +56,33 @@ impl Sticky {
             _ => None,
         });
 
+        // Clients sharing a `pgdog.replica_affinity_key` (e.g. all connections
+        // from one pod) hash to the same index and therefore pin to the same
+        // replica under `ClientAffinity`. Without the key each connection gets
+        // its own random index — per-connection affinity.
+        let replica_index = params
+            .get("pgdog.replica_affinity_key")
+            .and_then(|value| value.as_str())
+            .map(replica_index_from_key)
+            .unwrap_or_else(|| rng().random_range(1..usize::MAX));
+
         Self {
             omni_index: rng().random_range(1..usize::MAX),
-            replica_index: rng().random_range(1..usize::MAX),
+            replica_index,
             role,
         }
     }
+}
+
+/// Map a client-supplied affinity key to a stable replica index.
+///
+/// FNV has a fixed seed, so the mapping is identical across PgDog processes —
+/// a client's connections pin to the same replica even when they land on
+/// different PgDog instances behind a load balancer.
+fn replica_index_from_key(key: &str) -> usize {
+    let mut hasher = FnvHasher::default();
+    key.hash(&mut hasher);
+    hasher.finish() as usize
 }
 
 #[cfg(test)]
@@ -80,5 +104,26 @@ mod test {
             let sticky = Sticky::from_params(&params);
             assert_eq!(sticky.role, role);
         }
+    }
+
+    fn sticky_with_key(key: &str) -> Sticky {
+        let mut params = Parameters::default();
+        params.insert("pgdog.replica_affinity_key", key);
+        Sticky::from_params(&params)
+    }
+
+    #[test]
+    fn test_replica_affinity_key_is_stable() {
+        // Same key always maps to the same replica index — across connections
+        // and (since FNV is fixed-seed) across PgDog processes.
+        assert_eq!(
+            sticky_with_key("pod-a").replica_index,
+            sticky_with_key("pod-a").replica_index
+        );
+        // Distinct keys map to distinct indices.
+        assert_ne!(
+            sticky_with_key("pod-a").replica_index,
+            sticky_with_key("pod-b").replica_index
+        );
     }
 }
