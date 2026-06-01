@@ -55,7 +55,7 @@ impl Sticky {
 
         Self {
             omni_index: rng().random_range(1..usize::MAX),
-            replica_index: rng().random_range(0..usize::MAX),
+            replica_index: rng().random_range(1..usize::MAX),
             role,
         }
     }
