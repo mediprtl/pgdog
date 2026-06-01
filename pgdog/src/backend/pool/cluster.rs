@@ -1150,4 +1150,93 @@ mod test {
         cluster.query_parser = QueryParserLevel::Off;
         assert!(!cluster.use_query_parser(&req));
     }
+
+    fn pool_config(lb: Option<LoadBalancingStrategy>) -> PoolConfig {
+        PoolConfig {
+            address: Address::new_test(),
+            config: Config {
+                inner: pgdog_stats::Config {
+                    load_balancing_strategy: lb,
+                    ..Default::default()
+                },
+            },
+        }
+    }
+
+    #[test]
+    fn test_shard_load_balancing_strategy_precedence() {
+        use super::ClusterShardConfig;
+
+        // Primary override takes precedence over the replica.
+        let shard = ClusterShardConfig {
+            primary: Some(pool_config(Some(LoadBalancingStrategy::ClientAffinity))),
+            replicas: vec![pool_config(Some(LoadBalancingStrategy::RoundRobin))],
+        };
+        assert_eq!(
+            Some(LoadBalancingStrategy::ClientAffinity),
+            shard.load_balancing_strategy()
+        );
+
+        // No primary override: falls back to the first replica.
+        let shard = ClusterShardConfig {
+            primary: Some(pool_config(None)),
+            replicas: vec![pool_config(Some(LoadBalancingStrategy::ClientAffinity))],
+        };
+        assert_eq!(
+            Some(LoadBalancingStrategy::ClientAffinity),
+            shard.load_balancing_strategy()
+        );
+
+        // Neither set: no override.
+        let shard = ClusterShardConfig {
+            primary: Some(pool_config(None)),
+            replicas: vec![pool_config(None)],
+        };
+        assert_eq!(None, shard.load_balancing_strategy());
+    }
+
+    #[test]
+    fn test_cluster_config_resolves_database_override_then_general() {
+        use super::{ClusterConfig, ClusterShardConfig};
+
+        let user = crate::config::User::default();
+
+        // Database override beats the general default.
+        let mut cfg = crate::config::Config::default();
+        cfg.general.load_balancing_strategy = LoadBalancingStrategy::Random;
+        let shards = vec![ClusterShardConfig {
+            primary: Some(pool_config(Some(LoadBalancingStrategy::ClientAffinity))),
+            replicas: vec![],
+        }];
+        let cluster_config = ClusterConfig::new(
+            &cfg,
+            &user,
+            &shards,
+            ShardedTables::default(),
+            ShardedSchemas::default(),
+        );
+        assert_eq!(
+            LoadBalancingStrategy::ClientAffinity,
+            cluster_config.lb_strategy
+        );
+
+        // No database override: falls back to the general setting.
+        let mut cfg = crate::config::Config::default();
+        cfg.general.load_balancing_strategy = LoadBalancingStrategy::RoundRobin;
+        let shards = vec![ClusterShardConfig {
+            primary: Some(pool_config(None)),
+            replicas: vec![],
+        }];
+        let cluster_config = ClusterConfig::new(
+            &cfg,
+            &user,
+            &shards,
+            ShardedTables::default(),
+            ShardedSchemas::default(),
+        );
+        assert_eq!(
+            LoadBalancingStrategy::RoundRobin,
+            cluster_config.lb_strategy
+        );
+    }
 }
