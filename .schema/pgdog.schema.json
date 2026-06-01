@@ -410,7 +410,7 @@
           "minimum": 0
         },
         "load_balancing_strategy": {
-          "description": "Overrides the [`load_balancing_strategy`](https://docs.pgdog.dev/configuration/pgdog.toml/general/#load_balancing_strategy)\nsetting for this database's replica pool. Falls back to the global\n`[general]` value when unset.",
+          "description": "Overrides the `load_balancing_strategy` setting for this database's replica pool.\n\nhttps://docs.pgdog.dev/configuration/pgdog.toml/databases/#load_balancing_strategy",
           "anyOf": [
             {
               "$ref": "#/$defs/LoadBalancingStrategy"
@@ -1264,7 +1264,7 @@
           "const": "weighted_round_robin"
         },
         {
-          "description": "Pin each client connection to a single replica for its lifetime, chosen\nby a stable per-client index. Gives a client monotonic, same-replica\nreads; on ban/offline of the pinned replica the client fails over to\nanother and re-pins there.",
+          "description": "Pin each client to a single replica for its lifetime; fail over and re-pin if it is banned.",
           "type": "string",
           "const": "client_affinity"
         }

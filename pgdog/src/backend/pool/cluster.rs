@@ -759,13 +759,13 @@ mod test {
         },
         config::{
             config, DataType, Hasher, LoadBalancingStrategy, MultiTenant, ReadWriteSplit,
-            ReadWriteStrategy, Role, ShardedTable,
+            ReadWriteStrategy, Role, ShardedTable, User,
         },
         frontend::ClientRequest,
         net::Query,
     };
 
-    use super::{Cluster, DatabaseUser};
+    use super::{Cluster, ClusterConfig, ClusterShardConfig, DatabaseUser};
 
     impl Cluster {
         pub fn new_test(config: &ConfigAndUsers) -> Self {
@@ -1165,8 +1165,6 @@ mod test {
 
     #[test]
     fn test_shard_load_balancing_strategy_precedence() {
-        use super::ClusterShardConfig;
-
         // Primary override takes precedence over the replica.
         let shard = ClusterShardConfig {
             primary: Some(pool_config(Some(LoadBalancingStrategy::ClientAffinity))),
@@ -1197,9 +1195,7 @@ mod test {
 
     #[test]
     fn test_cluster_config_resolves_database_override_then_general() {
-        use super::{ClusterConfig, ClusterShardConfig};
-
-        let user = crate::config::User::default();
+        let user = User::default();
 
         // Database override beats the general default.
         let mut cfg = crate::config::Config::default();

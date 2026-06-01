@@ -52,10 +52,7 @@ pub enum LoadBalancingStrategy {
     LeastActiveConnections,
     /// Weighted round-robin, distributing requests proportionally to configured weights.
     WeightedRoundRobin,
-    /// Pin each client connection to a single replica for its lifetime, chosen
-    /// by a stable per-client index. Gives a client monotonic, same-replica
-    /// reads; on ban/offline of the pinned replica the client fails over to
-    /// another and re-pins there.
+    /// Pin each client to a single replica for its lifetime; fail over and re-pin if it is banned.
     ClientAffinity,
 }
 
@@ -209,9 +206,9 @@ pub struct Database {
     /// Used for weighted load balancing.
     #[serde(default = "Database::lb_weight")]
     pub lb_weight: u8,
-    /// Overrides the [`load_balancing_strategy`](https://docs.pgdog.dev/configuration/pgdog.toml/general/#load_balancing_strategy)
-    /// setting for this database's replica pool. Falls back to the global
-    /// `[general]` value when unset.
+    /// Overrides the `load_balancing_strategy` setting for this database's replica pool.
+    ///
+    /// https://docs.pgdog.dev/configuration/pgdog.toml/databases/#load_balancing_strategy
     pub load_balancing_strategy: Option<LoadBalancingStrategy>,
 }
 
