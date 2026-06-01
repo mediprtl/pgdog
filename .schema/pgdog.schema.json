@@ -1251,6 +1251,11 @@
           "description": "Weighted round-robin, distributing requests proportionally to configured weights.",
           "type": "string",
           "const": "weighted_round_robin"
+        },
+        {
+          "description": "Pin each client connection to a single replica for its lifetime, chosen\nby a stable per-client index. Gives a client monotonic, same-replica\nreads; on ban/offline of the pinned replica the client fails over to\nanother and re-pins there.",
+          "type": "string",
+          "const": "client_affinity"
         }
       ]
     },
