@@ -7,3 +7,8 @@ password = "postgres"
 name = "postgres"
 database = "postgres_auto"
 password = "postgres"
+
+[[users]]
+name = "postgres"
+database = "postgres_affinity"
+password = "postgres"

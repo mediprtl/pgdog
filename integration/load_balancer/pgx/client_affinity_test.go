@@ -11,12 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// The client_affinity instance runs on 6433 with
-// load_balancing_strategy = "client_affinity".
+// The postgres_affinity database overrides load_balancing_strategy to
+// "client_affinity" (same cluster as postgres, on the main 6432 instance).
 func affinityConn(t *testing.T) *pgx.Conn {
 	conn, err := pgx.Connect(
 		context.Background(),
-		"postgres://postgres:postgres@127.0.0.1:6433/postgres?sslmode=disable",
+		"postgres://postgres:postgres@127.0.0.1:6432/postgres_affinity?sslmode=disable",
 	)
 	require.NoError(t, err)
 	return conn

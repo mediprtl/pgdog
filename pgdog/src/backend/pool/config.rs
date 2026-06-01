@@ -156,6 +156,7 @@ impl Config {
                 role_detection: database.role == Role::Auto,
                 resharding_only: database.resharding_only,
                 lb_weight: database.lb_weight,
+                load_balancing_strategy: database.load_balancing_strategy,
                 prepared_statements_level: general.prepared_statements,
                 ..Default::default()
             },
@@ -229,6 +230,29 @@ mod test {
         assert_eq!(PoolerMode::Session, config.pooler_mode);
         assert_eq!(Duration::from_millis(5), config.idle_timeout);
         assert!(config.read_only);
+    }
+
+    #[test]
+    fn test_load_balancing_strategy_database_override() {
+        use pgdog_config::LoadBalancingStrategy;
+
+        let general = General::default();
+        let user = User::default();
+
+        // No override: carried as None so the cluster falls back to general.
+        let cfg = Config::new(&general, &Database::default(), &user, false);
+        assert_eq!(None, cfg.load_balancing_strategy);
+
+        // Database override is carried through to the pool config.
+        let database = Database {
+            load_balancing_strategy: Some(LoadBalancingStrategy::ClientAffinity),
+            ..Default::default()
+        };
+        let cfg = Config::new(&general, &database, &user, false);
+        assert_eq!(
+            Some(LoadBalancingStrategy::ClientAffinity),
+            cfg.load_balancing_strategy
+        );
     }
 
     #[test]

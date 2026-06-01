@@ -3,7 +3,9 @@ use std::{
     time::Duration,
 };
 
-use pgdog_config::{PoolerMode, PreparedStatements, pooling::ConnectionRecovery};
+use pgdog_config::{
+    LoadBalancingStrategy, PoolerMode, PreparedStatements, pooling::ConnectionRecovery,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -342,6 +344,8 @@ pub struct Config {
     pub resharding_only: bool,
     /// LB weight.
     pub lb_weight: u8,
+    /// Per-database override of the load balancing strategy.
+    pub load_balancing_strategy: Option<LoadBalancingStrategy>,
     /// Prepared statements level.
     pub prepared_statements_level: PreparedStatements,
 }
@@ -383,6 +387,7 @@ impl Default for Config {
             role_detection: false,
             resharding_only: false,
             lb_weight: 255,
+            load_balancing_strategy: None,
             prepared_statements_level: PreparedStatements::default(),
         }
     }

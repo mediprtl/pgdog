@@ -72,6 +72,33 @@ database_name = "postgres"
 role = "auto"
 port = 45002
 
+# Per-database load_balancing_strategy override, used by the client_affinity
+# integration test. Same cluster as `postgres`, but pins each client to one
+# replica instead of round-robin.
+[[databases]]
+name = "postgres_affinity"
+host = "localhost"
+database_name = "postgres"
+role = "primary"
+port = 45000
+load_balancing_strategy = "client_affinity"
+
+[[databases]]
+name = "postgres_affinity"
+host = "localhost"
+database_name = "postgres"
+role = "replica"
+port = 45001
+load_balancing_strategy = "client_affinity"
+
+[[databases]]
+name = "postgres_affinity"
+host = "localhost"
+database_name = "postgres"
+role = "replica"
+port = 45002
+load_balancing_strategy = "client_affinity"
+
 
 [[plugins]]
 name = "pgdog_primary_only_tables"

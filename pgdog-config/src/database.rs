@@ -38,7 +38,9 @@ impl FromStr for ReadWriteStrategy {
 /// Note: See [load balancer](https://docs.pgdog.dev/features/load-balancer/) for more details.
 ///
 /// https://docs.pgdog.dev/configuration/pgdog.toml/general/#load_balancing_strategy
-#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq, Copy, JsonSchema)]
+#[derive(
+    Serialize, Deserialize, Debug, Clone, Copy, Default, PartialEq, Eq, Ord, PartialOrd, JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum LoadBalancingStrategy {
     /// Select a replica at random (default).
@@ -207,6 +209,10 @@ pub struct Database {
     /// Used for weighted load balancing.
     #[serde(default = "Database::lb_weight")]
     pub lb_weight: u8,
+    /// Overrides the [`load_balancing_strategy`](https://docs.pgdog.dev/configuration/pgdog.toml/general/#load_balancing_strategy)
+    /// setting for this database's replica pool. Falls back to the global
+    /// `[general]` value when unset.
+    pub load_balancing_strategy: Option<LoadBalancingStrategy>,
 }
 
 impl Database {

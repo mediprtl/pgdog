@@ -131,6 +131,19 @@ impl ClusterShardConfig {
             .map(|replica| replica.config.pooler_mode)
             .unwrap_or_default()
     }
+
+    /// Per-database load balancing strategy override, if any (primary takes
+    /// precedence, falling back to the first replica).
+    pub fn load_balancing_strategy(&self) -> Option<LoadBalancingStrategy> {
+        self.primary
+            .as_ref()
+            .and_then(|primary| primary.config.load_balancing_strategy)
+            .or_else(|| {
+                self.replicas
+                    .first()
+                    .and_then(|replica| replica.config.load_balancing_strategy)
+            })
+    }
 }
 
 /// Cluster creation config.
@@ -193,13 +206,18 @@ impl<'a> ClusterConfig<'a> {
             .map(|shard| shard.pooler_mode())
             .unwrap_or(user.pooler_mode.unwrap_or(general.pooler_mode));
 
+        let lb_strategy = shards
+            .first()
+            .and_then(|shard| shard.load_balancing_strategy())
+            .unwrap_or(general.load_balancing_strategy);
+
         Self {
             name: &user.database,
             passwords: user.passwords(),
             user: &user.name,
             replication_sharding: user.replication_sharding.clone(),
             pooler_mode,
-            lb_strategy: general.load_balancing_strategy,
+            lb_strategy,
             shards,
             sharded_tables,
             multi_tenant,

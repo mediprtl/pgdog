@@ -409,6 +409,17 @@
           "maximum": 255,
           "minimum": 0
         },
+        "load_balancing_strategy": {
+          "description": "Overrides the [`load_balancing_strategy`](https://docs.pgdog.dev/configuration/pgdog.toml/general/#load_balancing_strategy)\nsetting for this database's replica pool. Falls back to the global\n`[general]` value when unset.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoadBalancingStrategy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "lock_timeout": {
           "description": "This setting configures the `lock_timeout` connection parameter on all connections to Postgres for this database.\nAborts any statement that waits longer than the specified duration to acquire a lock.\nUnlike `statement_timeout`, this only counts time spent waiting for locks, not execution time.\n\nhttps://docs.pgdog.dev/configuration/pgdog.toml/databases/#lock_timeout",
           "type": [
