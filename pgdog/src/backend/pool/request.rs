@@ -8,6 +8,9 @@ pub struct Request {
     pub id: BackendKeyData,
     pub created_at: Instant,
     pub read: bool,
+    /// Stable per-client index used by the `ClientAffinity` load balancing
+    /// strategy to pin the client to one replica. Ignored by other strategies.
+    pub replica_affinity: Option<usize>,
 }
 
 impl Request {
@@ -16,6 +19,7 @@ impl Request {
             id,
             created_at: Instant::now(),
             read,
+            replica_affinity: None,
         }
     }
 
@@ -24,7 +28,15 @@ impl Request {
             id,
             created_at: Instant::now(),
             read: false,
+            replica_affinity: None,
         }
+    }
+
+    /// Pin replica selection to a stable per-client index (used by the
+    /// `ClientAffinity` strategy).
+    pub fn with_replica_affinity(mut self, index: usize) -> Self {
+        self.replica_affinity = Some(index);
+        self
     }
 }
 

@@ -389,6 +389,15 @@ impl LoadBalancer {
                     candidates.swap(0, max_idx);
                 }
             }
+            ClientAffinity => {
+                // Pin the client to one replica by rotating candidates so the
+                // client's stable index maps to a consistent starting target.
+                // The checkout loop below falls through to the remaining
+                // candidates (kept in stable order) if the pinned one is
+                // banned/offline, and re-pins to it once it recovers.
+                let first = request.replica_affinity.unwrap_or(0) % candidates.len();
+                candidates.rotate_left(first);
+            }
         }
 
         // Only ban a candidate pool if there are more than one

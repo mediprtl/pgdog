@@ -622,6 +622,65 @@ async fn test_read_write_split_exclude_primary_with_round_robin() {
 }
 
 #[tokio::test]
+async fn test_client_affinity_pins_to_one_replica() {
+    let replica_configs = vec![
+        create_test_pool_config("127.0.0.1", 5432),
+        create_test_pool_config("localhost", 5432),
+    ];
+
+    let replicas = LoadBalancer::new(
+        &None,
+        &replica_configs,
+        LoadBalancingStrategy::ClientAffinity,
+        ReadWriteSplit::ExcludePrimary,
+    );
+    replicas.launch();
+
+    // Same client index -> same replica on every checkout.
+    let request = Request::default().with_replica_affinity(0);
+    let mut pinned_ids = HashSet::new();
+    for _ in 0..6 {
+        let conn = replicas.get(&request).await.unwrap();
+        pinned_ids.insert(conn.pool.id());
+    }
+    assert_eq!(
+        pinned_ids.len(),
+        1,
+        "ClientAffinity must pin a client to a single replica"
+    );
+    let pinned = *pinned_ids.iter().next().unwrap();
+
+    // A different client index maps to the other replica.
+    let other = Request::default().with_replica_affinity(1);
+    let conn = replicas.get(&other).await.unwrap();
+    assert_ne!(
+        conn.pool.id(),
+        pinned,
+        "a different client index should pin to a different replica"
+    );
+    drop(conn);
+
+    // Failover: ban the pinned replica; the client re-pins to another one.
+    let pinned_target = replicas
+        .targets
+        .iter()
+        .find(|t| t.pool.id() == pinned)
+        .unwrap();
+    pinned_target
+        .ban
+        .ban(Error::ServerError, Duration::from_millis(500));
+    let conn = replicas.get(&request).await.unwrap();
+    assert_ne!(
+        conn.pool.id(),
+        pinned,
+        "client must fail over off a banned pinned replica"
+    );
+    drop(conn);
+
+    replicas.shutdown();
+}
+
+#[tokio::test]
 async fn test_monitor_shuts_down_on_notify() {
     let pool_config1 = create_test_pool_config("127.0.0.1", 5432);
     let pool_config2 = create_test_pool_config("localhost", 5432);

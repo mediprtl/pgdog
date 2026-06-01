@@ -50,6 +50,11 @@ pub enum LoadBalancingStrategy {
     LeastActiveConnections,
     /// Weighted round-robin, distributing requests proportionally to configured weights.
     WeightedRoundRobin,
+    /// Pin each client connection to a single replica for its lifetime, chosen
+    /// by a stable per-client index. Gives a client monotonic, same-replica
+    /// reads; on ban/offline of the pinned replica the client fails over to
+    /// another and re-pins there.
+    ClientAffinity,
 }
 
 impl FromStr for LoadBalancingStrategy {
@@ -61,6 +66,7 @@ impl FromStr for LoadBalancingStrategy {
             "roundrobin" => Ok(Self::RoundRobin),
             "leastactiveconnections" => Ok(Self::LeastActiveConnections),
             "weightedroundrobin" => Ok(Self::WeightedRoundRobin),
+            "clientaffinity" => Ok(Self::ClientAffinity),
             _ => Err(format!("Invalid load balancing strategy: {}", s)),
         }
     }
@@ -310,5 +316,38 @@ impl Deref for EnumeratedDatabase {
 impl DerefMut for EnumeratedDatabase {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.database
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LoadBalancingStrategy;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_client_affinity_from_str() {
+        for s in [
+            "client_affinity",
+            "clientaffinity",
+            "client-affinity",
+            "CLIENT_AFFINITY",
+        ] {
+            assert_eq!(
+                LoadBalancingStrategy::from_str(s).unwrap(),
+                LoadBalancingStrategy::ClientAffinity,
+                "failed to parse {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_client_affinity_toml_snake_case() {
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            strategy: LoadBalancingStrategy,
+        }
+        let w: Wrapper =
+            toml::from_str("strategy = \"client_affinity\"").expect("snake_case deserialize");
+        assert_eq!(w.strategy, LoadBalancingStrategy::ClientAffinity);
     }
 }

@@ -12,6 +12,10 @@ pub struct Sticky {
     /// stick to only one database.
     pub omni_index: usize,
 
+    /// Stable per-client index used by the `ClientAffinity` load balancing
+    /// strategy to pin this connection to a single replica for its lifetime.
+    pub replica_index: usize,
+
     /// Desired database role. This comes from `target_session_attrs`
     /// provided by the client.
     pub role: Option<Role>,
@@ -33,6 +37,7 @@ impl Sticky {
     pub fn new_test() -> Self {
         Self {
             omni_index: 1,
+            replica_index: 1,
             role: None,
         }
     }
@@ -50,6 +55,7 @@ impl Sticky {
 
         Self {
             omni_index: rng().random_range(1..usize::MAX),
+            replica_index: rng().random_range(0..usize::MAX),
             role,
         }
     }
