@@ -1,0 +1,44 @@
+# Second pgdog instance used only by the client_affinity integration test.
+# load_balancing_strategy is a [general] (global) setting, so a dedicated
+# instance is needed to exercise it alongside the round_robin instance.
+[general]
+host = "0.0.0.0"
+port = 6433
+shutdown_timeout = 5_000
+query_timeout = 15_000
+checkout_timeout = 5_000
+connect_timeout = 5_000
+idle_timeout = 30_000
+prepared_statements = "extended"
+passthrough_auth = "enabled_plain"
+default_pool_size = 90
+workers = 4
+min_pool_size = 1
+pooler_mode = "transaction"
+load_balancing_strategy = "client_affinity"
+auth_type = "trust"
+read_write_split = "exclude_primary"
+lsn_check_delay = 0
+lsn_check_interval = 1_000
+
+[admin]
+user = "pgdog"
+password = "pgdog"
+
+[[databases]]
+name = "postgres"
+host = "localhost"
+role = "primary"
+port = 45000
+
+[[databases]]
+name = "postgres"
+host = "localhost"
+port = 45001
+role = "replica"
+
+[[databases]]
+name = "postgres"
+host = "localhost"
+role = "replica"
+port = 45002

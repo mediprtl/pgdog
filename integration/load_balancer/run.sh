@@ -16,7 +16,7 @@ echo "[load_balancer] LLVM_PROFILE_FILE=${LLVM_PROFILE_FILE}"
 
 docker compose down 2>/dev/null || true
 
-for p in 45000 45001 45002; do
+for p in 45000 45001 45002 6433; do
     container=$(docker ps -q --filter "publish=${p}")
     if [ -n "${container}" ]; then
         echo "Stopping docker container on port ${p}: ${container}"
@@ -52,10 +52,29 @@ while ! pg_isready; do
     sleep 1
 done
 
+# Second pgdog instance for the client_affinity test. load_balancing_strategy
+# is a global [general] setting, so it needs its own instance (port 6433).
+affinity_bin="${PGDOG_BIN:-${SCRIPT_DIR}/../../target/debug/pgdog}"
+"${affinity_bin}" \
+    --config ${SCRIPT_DIR}/pgdog_client_affinity.toml \
+    --users ${SCRIPT_DIR}/users_client_affinity.toml \
+    > ${SCRIPT_DIR}/log_affinity.txt 2>&1 &
+affinity_pid=$!
+export PGPORT=6433
+while ! pg_isready; do
+    if ! kill -0 ${affinity_pid} 2>/dev/null; then
+        echo "client_affinity pgdog exited early:"; cat ${SCRIPT_DIR}/log_affinity.txt
+        exit 1
+    fi
+    sleep 1
+done
+
 pushd ${SCRIPT_DIR}/pgx
 go get
 go test -v -count 3
 popd
+
+kill ${affinity_pid} 2>/dev/null || true
 
 php ${SCRIPT_DIR}/pdo_read_write_split.php
 
