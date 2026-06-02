@@ -350,6 +350,29 @@ impl LoadBalancer {
             return Err(Error::AllReplicasDown);
         }
 
+        // Read-your-writes floor: keep only replicas that have replayed at least
+        // `min_lsn`. Replay LSN is monotonic and the cached value is <= actual, so
+        // this never serves a stale read (only ever an extra fallback). If none
+        // qualify, fall back to the primary (it always has the write).
+        if let Some(min_lsn) = request.min_lsn {
+            let caught_up: Vec<&Target> = candidates
+                .iter()
+                .copied()
+                .filter(|target| {
+                    let stats = target.pool.lsn_stats();
+                    stats.valid() && stats.lsn.lsn >= min_lsn
+                })
+                .collect();
+
+            if !caught_up.is_empty() {
+                candidates = caught_up;
+            } else if let Some(primary) = self.primary_target() {
+                candidates = vec![primary];
+            } else {
+                return Err(Error::NoReplicaCaughtUp);
+            }
+        }
+
         match self.lb_strategy {
             Random => candidates.shuffle(&mut rand::rng()),
             RoundRobin => {

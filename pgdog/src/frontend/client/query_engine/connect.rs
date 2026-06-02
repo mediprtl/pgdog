@@ -1,3 +1,6 @@
+use std::str::FromStr;
+
+use pgdog_stats::replication::Lsn;
 use tokio::time::timeout;
 
 use crate::frontend::router::parser::ShardWithPriority;
@@ -30,7 +33,17 @@ impl QueryEngine {
 
         let connect_route = connect_route.unwrap_or(context.client_request.route());
 
-        let request = Request::new(context.id, connect_route.is_read());
+        // Read-your-writes floor: a client sets `pgdog.min_lsn` (startup param or
+        // `SET`) to the commit LSN it must observe; the LB routes the read only to
+        // a replica that has replayed at least this far.
+        let min_lsn = context
+            .params
+            .get("pgdog.min_lsn")
+            .and_then(|value| value.as_str())
+            .and_then(|value| Lsn::from_str(value).ok())
+            .map(|lsn| lsn.lsn);
+
+        let request = Request::new(context.id, connect_route.is_read()).with_min_lsn(min_lsn);
 
         self.stats.waiting(request.created_at);
         self.comms.update_stats(self.stats);

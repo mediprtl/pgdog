@@ -76,6 +76,9 @@ pub enum Error {
 
     #[error("replica lag")]
     ReplicaLag,
+
+    #[error("no replica caught up to the requested min_lsn")]
+    NoReplicaCaughtUp,
 }
 
 impl Error {
