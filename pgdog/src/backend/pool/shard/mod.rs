@@ -324,7 +324,12 @@ impl ShardInner {
             pub_sub_enabled,
         } = shard;
         let primary = primary.as_ref().map(Pool::new);
-        let lb = LoadBalancer::new(&primary, replicas, lb_strategy, rw_split);
+        let min_lsn_primary_fallback = crate::config::config()
+            .config
+            .general
+            .min_lsn_primary_fallback;
+        let lb = LoadBalancer::new(&primary, replicas, lb_strategy, rw_split)
+            .with_min_lsn_primary_fallback(min_lsn_primary_fallback);
         let comms = Arc::new(ShardComms {
             shutdown: Notify::new(),
             lsn_check_interval,

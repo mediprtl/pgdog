@@ -160,6 +160,7 @@ impl Error {
             Error::Pool(PoolError::CheckoutTimeout) => true,
             Error::Pool(PoolError::AllReplicasDown) => true,
             Error::Pool(PoolError::Banned) => true,
+            Error::Pool(PoolError::NoReplicaCaughtUp) => true,
             _ => false,
         }
     }

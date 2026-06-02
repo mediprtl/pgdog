@@ -68,20 +68,19 @@ func TestMinLsnRoutesReads(t *testing.T) {
 	assert.Equal(t, int64(reads), okReplicas, "satisfied min_lsn must be served by replicas")
 	assert.Equal(t, int64(0), okPrimary, "satisfied min_lsn must not touch the primary")
 
-	// Case B: min_lsn far in the future -> no replica caught up -> fall back to primary.
+	// Case B: min_lsn far in the future -> no replica caught up. Default behavior
+	// (min_lsn_primary_fallback off) is to error, not serve stale or hit the primary.
 	ResetStats()
 	b := pgdogConn(t)
 	_, err = b.Exec(context.Background(), "SET pgdog.min_lsn = '7FFFFFFF/FFFFFFFF'")
 	require.NoError(t, err)
-	for i := range reads {
-		_, err := b.Exec(context.Background(), "SELECT * FROM lb_minlsn_far WHERE id = $1", int64(i))
-		assert.NoError(t, err)
-	}
+	_, readErr := b.Exec(context.Background(), "SELECT * FROM lb_minlsn_far WHERE id = $1", int64(1))
 	b.Close(context.Background())
 
 	farReplicas := replicaTotal("lb_minlsn_far")
 	farPrimary := LoadStatsForPrimary("lb_minlsn_far").Calls
-	t.Logf("min_lsn=max: replicas=%d primary=%d", farReplicas, farPrimary)
+	t.Logf("min_lsn=max: err=%v replicas=%d primary=%d", readErr, farReplicas, farPrimary)
+	assert.Error(t, readErr, "unmet min_lsn must error, not serve a stale read")
 	assert.Equal(t, int64(0), farReplicas, "unmet min_lsn must not be served by a behind replica")
-	assert.Equal(t, int64(reads), farPrimary, "unmet min_lsn must fall back to the primary")
+	assert.Equal(t, int64(0), farPrimary, "unmet min_lsn must not hit the primary when fallback is off")
 }

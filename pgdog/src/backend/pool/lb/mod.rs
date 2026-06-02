@@ -85,6 +85,9 @@ pub struct LoadBalancer {
     pub(super) role_detection: Arc<Notify>,
     /// Read/write split.
     pub(super) rw_split: ReadWriteSplit,
+    /// Fall back to the primary when no replica satisfies a read's `min_lsn`
+    /// (instead of erroring).
+    pub(super) min_lsn_primary_fallback: bool,
 }
 
 impl LoadBalancer {
@@ -125,7 +128,14 @@ impl LoadBalancer {
             maintenance: Arc::new(Notify::new()),
             role_detection: Arc::new(Notify::new()),
             rw_split,
+            min_lsn_primary_fallback: false,
         }
+    }
+
+    /// Fall back to the primary when no replica satisfies a read's `min_lsn`.
+    pub fn with_min_lsn_primary_fallback(mut self, fallback: bool) -> Self {
+        self.min_lsn_primary_fallback = fallback;
+        self
     }
 
     /// Get the primary pool, if configured.
@@ -352,8 +362,9 @@ impl LoadBalancer {
 
         // Read-your-writes floor: keep only replicas that have replayed at least
         // `min_lsn`. Replay LSN is monotonic and the cached value is <= actual, so
-        // this never serves a stale read (only ever an extra fallback). If none
-        // qualify, fall back to the primary (it always has the write).
+        // this never serves a stale read. If none qualify the read errors with
+        // `NoReplicaCaughtUp` (the client retries) unless `min_lsn_primary_fallback`
+        // is set, in which case it falls back to the primary.
         if let Some(min_lsn) = request.min_lsn {
             let caught_up: Vec<&Target> = candidates
                 .iter()
@@ -364,9 +375,14 @@ impl LoadBalancer {
                 })
                 .collect();
 
+            let fallback = self
+                .min_lsn_primary_fallback
+                .then(|| self.primary_target())
+                .flatten();
+
             if !caught_up.is_empty() {
                 candidates = caught_up;
-            } else if let Some(primary) = self.primary_target() {
+            } else if let Some(primary) = fallback {
                 candidates = vec![primary];
             } else {
                 return Err(Error::NoReplicaCaughtUp);
