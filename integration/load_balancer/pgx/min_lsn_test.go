@@ -81,6 +81,12 @@ func TestMinLsnRoutesReads(t *testing.T) {
 	farPrimary := LoadStatsForPrimary("lb_minlsn_far").Calls
 	t.Logf("min_lsn=max: err=%v replicas=%d primary=%d", readErr, farReplicas, farPrimary)
 	assert.Error(t, readErr, "unmet min_lsn must error, not serve a stale read")
+	// Pin the wire message: clients (and the glow relation_writer gate) match on
+	// this exact text to recognize the rejection and defer, so it must not drift.
+	if readErr != nil {
+		assert.Contains(t, readErr.Error(), "no replica caught up to the requested min_lsn",
+			"unmet min_lsn must surface PgDog's NoReplicaCaughtUp message to the client")
+	}
 	assert.Equal(t, int64(0), farReplicas, "unmet min_lsn must not be served by a behind replica")
 	assert.Equal(t, int64(0), farPrimary, "unmet min_lsn must not hit the primary when fallback is off")
 }
