@@ -385,10 +385,10 @@ impl LoadBalancer {
             } else if let Some(primary) = fallback {
                 candidates = vec![primary];
             } else {
-                // Estimate when the soonest replica will reach the floor (gap /
-                // measured apply rate), so the client can size its defer to the
-                // real deficit. `0` = not estimable yet (no rate sample / stalled);
-                // the client falls back to its own default backoff.
+                // Estimate when the soonest replica will reach the floor, from
+                // its replication lag in time, so the client can size its defer
+                // to the real deficit. `0` = not estimable (no valid LSN stats
+                // yet); the client falls back to its own default backoff.
                 let eta_seconds = candidates
                     .iter()
                     .filter_map(|target| target.pool.lsn_stats().eta_to(min_lsn))

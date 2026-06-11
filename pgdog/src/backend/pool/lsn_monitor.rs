@@ -45,7 +45,16 @@ SELECT
             COALESCE(pg_last_xact_replay_timestamp(), now())
         ELSE
             now()
-    END AS timestamp
+    END AS timestamp,
+    CASE
+        WHEN pg_is_in_recovery() THEN
+            COALESCE(
+                EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()))::bigint,
+                0
+            )
+        ELSE
+            0
+    END AS replay_lag_seconds
 ";
 
 static AURORA_LSN_QUERY: &str = "
@@ -53,17 +62,19 @@ SELECT
     pg_is_in_recovery() AS replica,
     '0/0'::pg_lsn AS lsn,
     0::bigint AS offset_bytes,
-    now() AS timestamp
+    now() AS timestamp,
+    0::bigint AS replay_lag_seconds
 ";
 
 /// LSN information.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LsnStats {
     inner: StatsLsnStats,
-    /// Replica WAL apply rate in bytes/sec, measured by the monitor from
-    /// successive LSN samples. `None` until two samples exist, or when the
-    /// replica isn't advancing (stalled), in which case no ETA can be derived.
-    apply_rate: Option<f64>,
+    /// Replica replication lag in whole seconds: `now() -
+    /// pg_last_xact_replay_timestamp()`, computed DB-side (one clock, no
+    /// pgdog<->DB skew or timezone handling). `0` on the primary, on Aurora, or
+    /// when the replica has not replayed any transaction yet.
+    replay_lag_seconds: i64,
 }
 
 impl Deref for LsnStats {
@@ -84,7 +95,7 @@ impl From<StatsLsnStats> for LsnStats {
     fn from(value: StatsLsnStats) -> Self {
         Self {
             inner: value,
-            apply_rate: None,
+            replay_lag_seconds: 0,
         }
     }
 }
@@ -114,32 +125,33 @@ impl LsnStats {
         }
     }
 
-    /// Estimated time for this replica to replay up to `min_lsn`, derived from
-    /// the apply rate the monitor measured (gap / rate). Used to size a client's
-    /// read-your-writes defer to the real deficit. Returns `None` when it can't
-    /// be estimated: no rate sample yet, or the replica isn't advancing.
+    /// Estimated time for this replica to replay up to `min_lsn`: its current
+    /// replication lag in time (`now() - pg_last_xact_replay_timestamp()`,
+    /// measured DB-side). Used to size a client's read-your-writes defer to the
+    /// real deficit. This is a stable single-sample reading — unlike a
+    /// bytes/apply-rate derivative, it can't be fooled by bursty WAL replay into
+    /// reporting a near-zero rate (and so a runaway ETA). Since `min_lsn`
+    /// committed after the replica's current frontier, the true time to reach it
+    /// is at most this lag, so the estimate is safe-biased (slightly long for an
+    /// already-old `min_lsn`). Returns `None` when stats are invalid, `ZERO` once
+    /// the replica has reached the floor.
     pub fn eta_to(&self, min_lsn: i64) -> Option<Duration> {
         if !self.valid() {
             return None;
         }
-        let gap = min_lsn - self.lsn.lsn;
-        if gap <= 0 {
+        if self.lsn.lsn >= min_lsn {
             return Some(Duration::ZERO);
         }
-        let rate = self.apply_rate?;
-        if rate <= 0.0 {
-            return None;
-        }
-        // Clamp to a day so a pathologically distant floor (e.g. a synthetic
-        // max-LSN) can't overflow Duration::from_secs_f64; clients clamp further.
-        let secs = (gap as f64 / rate).min(86_400.0);
-        Some(Duration::from_secs_f64(secs))
+        // Clamp to a day so a pathological lag can't overflow; clients clamp
+        // further. Negative (clock wobble) floors at zero.
+        let secs = self.replay_lag_seconds.clamp(0, 86_400) as u64;
+        Some(Duration::from_secs(secs))
     }
 }
 
 impl LsnStats {
     fn from_row(value: DataRow, aurora: bool) -> Self {
-        StatsLsnStats {
+        let mut stats: LsnStats = StatsLsnStats {
             replica: value.get(0, Format::Text).unwrap_or_default(),
             lsn: value.get(1, Format::Text).unwrap_or_default(),
             offset_bytes: value.get(2, Format::Text).unwrap_or_default(),
@@ -147,7 +159,9 @@ impl LsnStats {
             fetched: SystemTime::now(),
             aurora,
         }
-        .into()
+        .into();
+        stats.replay_lag_seconds = value.get(4, Format::Text).unwrap_or_default();
+        stats
     }
 }
 
@@ -219,9 +233,6 @@ impl LsnMonitor {
 
         let mut aurora_detected: Option<bool> = None;
         let mut interval = interval(self.pool.config().lsn_check_interval);
-        // Previous sample, to measure the replica's WAL apply rate (bytes/sec)
-        // across poll intervals so we can estimate catch-up ETAs.
-        let mut prev: Option<LsnStats> = None;
 
         loop {
             select! {
@@ -250,24 +261,7 @@ impl LsnMonitor {
 
             if let Some(row) = self.run_query(&mut conn, query).await {
                 drop(conn);
-                let mut stats = LsnStats::from_row(row, aurora);
-                // Apply rate = how many WAL bytes the replica replayed since the
-                // last sample, per second. Only when both samples are real and
-                // the replica advanced (a flat/declining sample leaves it None).
-                if let Some(prev) = prev {
-                    if prev.valid() && stats.valid() {
-                        let dt = stats
-                            .fetched
-                            .duration_since(prev.fetched)
-                            .unwrap_or_default()
-                            .as_secs_f64();
-                        let dlsn = (stats.lsn.lsn - prev.lsn.lsn) as f64;
-                        if dt > 0.0 && dlsn > 0.0 {
-                            stats.apply_rate = Some(dlsn / dt);
-                        }
-                    }
-                }
-                prev = Some(stats);
+                let stats = LsnStats::from_row(row, aurora);
                 *self.pool.inner().lsn_stats.write() = stats;
                 trace!("lsn monitor stats updated [{}]", self.pool.addr());
             }
@@ -321,7 +315,7 @@ mod test {
     }
 
     #[test]
-    fn test_eta_to_uses_apply_rate() {
+    fn test_eta_to_uses_replay_lag() {
         let mut lsn = Lsn::default();
         lsn.lsn = 1000;
         let mut stats: LsnStats = StatsLsnStats {
@@ -334,23 +328,20 @@ mod test {
         }
         .into();
 
-        // No rate sample yet -> not estimable.
-        assert!(stats.eta_to(1500).is_none());
+        // Behind the floor: eta is the replica's replication lag in time.
+        stats.replay_lag_seconds = 7;
+        assert_eq!(stats.eta_to(1500).map(|d| d.as_secs()), Some(7));
 
-        // 500 bytes still to replay at 100 bytes/sec -> ~5s.
-        stats.apply_rate = Some(100.0);
-        assert_eq!(stats.eta_to(1500).map(|d| d.as_secs()), Some(5));
-
-        // Already at/past the floor -> zero.
+        // Already at/past the floor -> zero, regardless of lag.
         assert_eq!(stats.eta_to(1000), Some(Duration::ZERO));
         assert_eq!(stats.eta_to(500), Some(Duration::ZERO));
 
-        // Stalled (rate 0) -> not estimable.
-        stats.apply_rate = Some(0.0);
-        assert!(stats.eta_to(1500).is_none());
+        // Pathological lag is clamped to a day, not overflowed.
+        stats.replay_lag_seconds = i64::MAX;
+        assert!(stats.eta_to(1500).unwrap().as_secs() <= 86_400);
 
-        // Pathologically distant floor is clamped, not overflowed.
-        stats.apply_rate = Some(1.0);
-        assert!(stats.eta_to(i64::MAX).unwrap().as_secs() <= 86_400);
+        // Negative lag (clock wobble) floors at zero.
+        stats.replay_lag_seconds = -5;
+        assert_eq!(stats.eta_to(1500), Some(Duration::ZERO));
     }
 }
