@@ -1804,5 +1804,5 @@ async fn test_min_lsn_errors_when_no_replica_caught_up() {
     let request = Request::default().with_min_lsn(Some(100));
     let result = replicas.get(&request).await;
 
-    assert!(matches!(result, Err(Error::NoReplicaCaughtUp)));
+    assert!(matches!(result, Err(Error::NoReplicaCaughtUp { .. })));
 }

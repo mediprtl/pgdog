@@ -86,6 +86,10 @@ func TestMinLsnRoutesReads(t *testing.T) {
 	if readErr != nil {
 		assert.Contains(t, readErr.Error(), "no replica caught up to the requested min_lsn",
 			"unmet min_lsn must surface PgDog's NoReplicaCaughtUp message to the client")
+		// The message also carries a catch-up ETA (eta ~Ns) so the client can size
+		// its retry/defer to the real deficit instead of a fixed backoff.
+		assert.Regexp(t, `eta ~\d+s`, readErr.Error(),
+			"NoReplicaCaughtUp must report the catch-up ETA")
 	}
 	assert.Equal(t, int64(0), farReplicas, "unmet min_lsn must not be served by a behind replica")
 	assert.Equal(t, int64(0), farPrimary, "unmet min_lsn must not hit the primary when fallback is off")

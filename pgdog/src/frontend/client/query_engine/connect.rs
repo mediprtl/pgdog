@@ -7,7 +7,7 @@ use crate::frontend::router::parser::ShardWithPriority;
 
 use super::*;
 
-use tracing::{error, trace};
+use tracing::{debug, error, trace};
 
 impl QueryEngine {
     /// Connect to backend, if necessary.
@@ -71,7 +71,12 @@ impl QueryEngine {
             }
 
             Err(err) => {
-                self.stats.error();
+                // A min_lsn miss is expected read-your-writes backpressure, not a
+                // server fault: don't inflate the pool error stat with it.
+                let expected_backpressure = err.is_no_replica_caught_up();
+                if !expected_backpressure {
+                    self.stats.error();
+                }
                 let can_recover = self
                     .backend
                     .cluster()
@@ -79,7 +84,12 @@ impl QueryEngine {
                     .unwrap_or_default();
 
                 if err.no_server() && can_recover {
-                    error!("{} [{:?}]", err, context.stream.peer_addr());
+                    // Expected backpressure logs at debug; real faults at error.
+                    if expected_backpressure {
+                        debug!("{} [{:?}]", err, context.stream.peer_addr());
+                    } else {
+                        error!("{} [{:?}]", err, context.stream.peer_addr());
+                    }
 
                     let error = ErrorResponse::from_err(&err);
 

@@ -385,7 +385,17 @@ impl LoadBalancer {
             } else if let Some(primary) = fallback {
                 candidates = vec![primary];
             } else {
-                return Err(Error::NoReplicaCaughtUp);
+                // Estimate when the soonest replica will reach the floor (gap /
+                // measured apply rate), so the client can size its defer to the
+                // real deficit. `0` = not estimable yet (no rate sample / stalled);
+                // the client falls back to its own default backoff.
+                let eta_seconds = candidates
+                    .iter()
+                    .filter_map(|target| target.pool.lsn_stats().eta_to(min_lsn))
+                    .min()
+                    .map(|eta| (eta.as_secs_f64().ceil() as i64).max(1))
+                    .unwrap_or(0);
+                return Err(Error::NoReplicaCaughtUp { eta_seconds });
             }
         }
 

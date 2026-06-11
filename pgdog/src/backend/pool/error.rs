@@ -77,8 +77,14 @@ pub enum Error {
     #[error("replica lag")]
     ReplicaLag,
 
-    #[error("no replica caught up to the requested min_lsn")]
-    NoReplicaCaughtUp,
+    // `eta_seconds` is the estimated time for the soonest replica to replay up
+    // to the requested min_lsn (gap / measured apply rate), so the client can
+    // size its read-your-writes defer to the real deficit instead of a fixed
+    // backoff. `0` means "not estimable yet" (no apply-rate sample, or stalled)
+    // and the client should fall back to its own default. The message prefix is
+    // matched by clients (and the glow relation_writer gate); keep it stable.
+    #[error("no replica caught up to the requested min_lsn (eta ~{eta_seconds}s)")]
+    NoReplicaCaughtUp { eta_seconds: i64 },
 }
 
 impl Error {
