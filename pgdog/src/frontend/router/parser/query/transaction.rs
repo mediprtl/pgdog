@@ -24,10 +24,16 @@ impl QueryParser {
 
         match stmt.kind() {
             TransactionStmtKind::TransStmtCommit => {
-                return Ok(Command::CommitTransaction { extended })
+                return Ok(Command::CommitTransaction {
+                    extended,
+                    reopen: None,
+                })
             }
             TransactionStmtKind::TransStmtRollback => {
-                return Ok(Command::RollbackTransaction { extended })
+                return Ok(Command::RollbackTransaction {
+                    extended,
+                    reopen: None,
+                })
             }
             TransactionStmtKind::TransStmtBegin | TransactionStmtKind::TransStmtStart => {
                 let transaction_type = Self::transaction_type(&stmt.options).unwrap_or_default();
@@ -80,6 +86,59 @@ impl QueryParser {
         }
 
         Some(TransactionType::ReadWrite)
+    }
+
+    /// Detect a `COMMIT; BEGIN` / `ROLLBACK; BEGIN` simple-query batch - the
+    /// "commit (or rollback) and immediately reopen" form autocommit-off drivers
+    /// (e.g. ADBC) send. PgDog otherwise routes on the first statement only
+    /// (see `stmts.first()` in the parser), silently dropping the trailing BEGIN.
+    /// On the backend-less commit path (a transaction that only touched
+    /// PgDog-intercepted state, e.g. a tracked `SET`) that means the reopened
+    /// transaction is never established, so the next statements run unpinned and
+    /// transaction-local state (e.g. an RLS `set_config`) is lost. Capturing the
+    /// reopen lets the commit handler re-establish the deferred transaction.
+    pub(super) fn try_transaction_reopen(
+        stmts: &[RawStmt],
+        context: &QueryParserContext,
+    ) -> Result<Option<Command>, Error> {
+        let txn = |i: usize| -> Option<&TransactionStmt> {
+            match stmts.get(i)?.stmt.as_ref()?.node.as_ref()? {
+                NodeEnum::TransactionStmt(stmt) => Some(stmt),
+                _ => None,
+            }
+        };
+
+        let first_kind = match txn(0).map(|s| s.kind()) {
+            Some(
+                k @ (TransactionStmtKind::TransStmtCommit | TransactionStmtKind::TransStmtRollback),
+            ) => k,
+            _ => return Ok(None),
+        };
+
+        // A trailing BEGIN/START anywhere after the leading COMMIT/ROLLBACK is a
+        // reopen; carry its transaction type so the new transaction routes correctly.
+        let mut reopen = None;
+        for i in 1..stmts.len() {
+            if let Some(stmt) = txn(i) {
+                if matches!(
+                    stmt.kind(),
+                    TransactionStmtKind::TransStmtBegin | TransactionStmtKind::TransStmtStart
+                ) {
+                    reopen = Some(Self::transaction_type(&stmt.options).unwrap_or_default());
+                    break;
+                }
+            }
+        }
+
+        if reopen.is_none() {
+            return Ok(None);
+        }
+
+        let extended = !context.query()?.simple();
+        Ok(Some(match first_kind {
+            TransactionStmtKind::TransStmtCommit => Command::CommitTransaction { extended, reopen },
+            _ => Command::RollbackTransaction { extended, reopen },
+        }))
     }
 }
 

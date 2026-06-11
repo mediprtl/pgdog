@@ -253,8 +253,14 @@ impl QueryParser {
 
         let stmts = &statement.parse_result().protobuf.stmts;
 
-        // Handle multi-statement SET commands (e.g. "SET x TO 1; SET y TO 2").
+        // Handle multi-statement transaction control + SET commands.
         if stmts.len() > 1 {
+            // "COMMIT; BEGIN" / "ROLLBACK; BEGIN" (autocommit-off drivers) - capture
+            // the reopen so the backend-less commit path keeps the transaction.
+            if let Some(command) = Self::try_transaction_reopen(stmts, context)? {
+                return Ok(command);
+            }
+            // "SET x TO 1; SET y TO 2".
             if let Some(command) = self.try_multi_set(stmts, context)? {
                 return Ok(command);
             }

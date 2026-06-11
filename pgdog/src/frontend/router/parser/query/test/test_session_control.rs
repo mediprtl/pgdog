@@ -1,6 +1,6 @@
 use pgdog_config::QueryParserLevel;
 
-use crate::{config::config, frontend::Command};
+use crate::{config::config, frontend::client::TransactionType, frontend::Command};
 
 use super::setup::*;
 
@@ -67,6 +67,64 @@ fn test_rollback() {
     assert!(
         matches!(command, Command::RollbackTransaction { .. }),
         "expected Command::RollbackTransaction, got {command:#?}",
+    );
+}
+
+#[test]
+fn test_plain_commit_has_no_reopen() {
+    let mut test = setup();
+    let command = test.execute(vec![Query::new("COMMIT").into()]);
+    assert!(
+        matches!(command, Command::CommitTransaction { reopen: None, .. }),
+        "expected CommitTransaction with reopen None, got {command:#?}",
+    );
+}
+
+#[test]
+fn test_commit_then_begin_captures_reopen() {
+    let mut test = setup();
+    let command = test.execute(vec![Query::new("COMMIT; BEGIN").into()]);
+    assert!(
+        matches!(
+            command,
+            Command::CommitTransaction {
+                reopen: Some(TransactionType::ReadWrite),
+                ..
+            }
+        ),
+        "expected CommitTransaction reopening a read-write transaction, got {command:#?}",
+    );
+}
+
+#[test]
+fn test_commit_then_begin_read_only_captures_type() {
+    let mut test = setup();
+    let command = test.execute(vec![Query::new("COMMIT; BEGIN READ ONLY").into()]);
+    assert!(
+        matches!(
+            command,
+            Command::CommitTransaction {
+                reopen: Some(TransactionType::ReadOnly),
+                ..
+            }
+        ),
+        "expected CommitTransaction reopening a read-only transaction, got {command:#?}",
+    );
+}
+
+#[test]
+fn test_rollback_then_begin_captures_reopen() {
+    let mut test = setup();
+    let command = test.execute(vec![Query::new("ROLLBACK; BEGIN").into()]);
+    assert!(
+        matches!(
+            command,
+            Command::RollbackTransaction {
+                reopen: Some(_),
+                ..
+            }
+        ),
+        "expected RollbackTransaction with reopen, got {command:#?}",
     );
 }
 

@@ -3,10 +3,11 @@ use crate::{
     config::config,
     frontend::{
         client::query_engine::{hooks::QueryEngineHooks, route_query::ClusterCheck},
+        client::TransactionType,
         router::{parser::Shard, Route},
         BufferedQuery, Client, ClientComms, Command, Error, Router, RouterContext, Stats,
     },
-    net::{ErrorResponse, Message, Parameters},
+    net::{ErrorResponse, Message, Parameters, Query},
     state::State,
 };
 
@@ -174,38 +175,44 @@ impl QueryEngine {
                 self.start_transaction(context, query.clone(), *transaction_type, *extended)
                     .await?
             }
-            Command::CommitTransaction { extended } => {
+            Command::CommitTransaction { extended, reopen } => {
+                // Copy out of the (immutably borrowed) command before the &mut self
+                // calls below; both are Copy.
+                let extended = *extended;
+                let reopen = *reopen;
                 self.backend.lock(self.advisory_locks.locked());
                 self.stats.locked(self.advisory_locks.locked());
 
-                if self.backend.connected() || *extended {
-                    let extended = *extended;
+                if self.backend.connected() || extended {
                     let transaction_route =
                         self.transaction_route(context.client_request.route())?;
                     context.client_request.route = Some(transaction_route.clone());
                     context.cross_shard_disabled = Some(false);
                     self.end_connected(context, false, extended).await?;
                 } else {
-                    self.end_not_connected(context, false, *extended).await?
+                    self.end_not_connected(context, false, extended).await?;
+                    self.reopen_transaction(context, reopen);
                 }
 
                 if context.params.commit() {
                     self.comms.update_params(context.params);
                 }
             }
-            Command::RollbackTransaction { extended } => {
+            Command::RollbackTransaction { extended, reopen } => {
+                let extended = *extended;
+                let reopen = *reopen;
                 self.backend.lock(self.advisory_locks.locked());
                 self.stats.locked(self.advisory_locks.locked());
 
-                if self.backend.connected() || *extended {
-                    let extended = *extended;
+                if self.backend.connected() || extended {
                     let transaction_route =
                         self.transaction_route(context.client_request.route())?;
                     context.client_request.route = Some(transaction_route.clone());
                     context.cross_shard_disabled = Some(false);
                     self.end_connected(context, true, extended).await?;
                 } else {
-                    self.end_not_connected(context, true, *extended).await?
+                    self.end_not_connected(context, true, extended).await?;
+                    self.reopen_transaction(context, reopen);
                 }
 
                 context.params.rollback();
@@ -255,6 +262,32 @@ impl QueryEngine {
         self.update_stats(context);
 
         Ok(())
+    }
+
+    /// Re-establish the transaction a client reopened in the same "COMMIT; BEGIN"
+    /// batch when the just-ended transaction never checked out a backend.
+    ///
+    /// `end_not_connected` only acts on the leading COMMIT/ROLLBACK and clears the
+    /// transaction state, so the trailing BEGIN the client sent would otherwise be
+    /// lost - leaving the next statements unpinned and dropping transaction-local
+    /// state (e.g. an RLS `set_config`). The connected path gets this for free by
+    /// forwarding the raw multi-statement to the backend; here we mirror
+    /// `start_transaction`'s deferred setup so the next statement pins a backend.
+    fn reopen_transaction(
+        &mut self,
+        context: &mut QueryEngineContext<'_>,
+        reopen: Option<TransactionType>,
+    ) {
+        let Some(transaction_type) = reopen else {
+            return;
+        };
+        let begin = if transaction_type == TransactionType::ReadOnly {
+            "BEGIN READ ONLY"
+        } else {
+            "BEGIN"
+        };
+        context.transaction = Some(transaction_type);
+        self.begin_stmt = Some(BufferedQuery::Query(Query::new(begin)));
     }
 
     fn update_stats(&mut self, context: &mut QueryEngineContext<'_>) {

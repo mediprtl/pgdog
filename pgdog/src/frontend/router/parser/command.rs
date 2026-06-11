@@ -25,9 +25,17 @@ pub enum Command {
     },
     CommitTransaction {
         extended: bool,
+        /// Set when the client's simple-query batch also reopens a transaction
+        /// ("COMMIT; BEGIN"), as autocommit-off drivers (e.g. ADBC) send. The
+        /// backend-less commit path uses this to re-establish the deferred
+        /// transaction; without it the reopen is silently dropped (see
+        /// `try_transaction_reopen`).
+        reopen: Option<TransactionType>,
     },
     RollbackTransaction {
         extended: bool,
+        /// See `CommitTransaction::reopen` - same for "ROLLBACK; BEGIN".
+        reopen: Option<TransactionType>,
     },
     ReplicationMeta,
     Set {
