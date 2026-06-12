@@ -66,6 +66,10 @@ SELECT
     0::bigint AS replay_lag_seconds
 ";
 
+/// Cap a replication-lag ETA at one day so a pathological lag value can't
+/// overflow `Duration`; clients clamp further.
+const MAX_REPLAY_LAG_SECONDS: i64 = 86_400;
+
 /// LSN information.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LsnStats {
@@ -125,16 +129,12 @@ impl LsnStats {
         }
     }
 
-    /// Estimated time for this replica to replay up to `min_lsn`: its current
-    /// replication lag in time (`now() - pg_last_xact_replay_timestamp()`,
-    /// measured DB-side). Used to size a client's read-your-writes defer to the
-    /// real deficit. This is a stable single-sample reading — unlike a
-    /// bytes/apply-rate derivative, it can't be fooled by bursty WAL replay into
-    /// reporting a near-zero rate (and so a runaway ETA). Since `min_lsn`
-    /// committed after the replica's current frontier, the true time to reach it
-    /// is at most this lag, so the estimate is safe-biased (slightly long for an
-    /// already-old `min_lsn`). Returns `None` when stats are invalid, `ZERO` once
-    /// the replica has reached the floor.
+    /// Estimated time for this replica to reach `min_lsn`: its replication lag in
+    /// time (`now() - pg_last_xact_replay_timestamp()`, measured DB-side), used by
+    /// the client to size its read-your-writes defer. A stable single-sample
+    /// reading — a bytes/apply-rate derivative gets fooled by bursty replay into a
+    /// runaway ETA. Safe-biased (true wait <= lag, since `min_lsn` committed after
+    /// the frontier). `None` if stats are invalid; `ZERO` once at/past the floor.
     pub fn eta_to(&self, min_lsn: i64) -> Option<Duration> {
         if !self.valid() {
             return None;
@@ -142,9 +142,9 @@ impl LsnStats {
         if self.lsn.lsn >= min_lsn {
             return Some(Duration::ZERO);
         }
-        // Clamp to a day so a pathological lag can't overflow; clients clamp
-        // further. Negative (clock wobble) floors at zero.
-        let secs = self.replay_lag_seconds.clamp(0, 86_400) as u64;
+        // Negative lag (clock wobble) floors at zero; clamp the top so a
+        // pathological value can't overflow. Clients clamp further.
+        let secs = self.replay_lag_seconds.clamp(0, MAX_REPLAY_LAG_SECONDS) as u64;
         Some(Duration::from_secs(secs))
     }
 }
@@ -316,11 +316,9 @@ mod test {
 
     #[test]
     fn test_eta_to_uses_replay_lag() {
-        let mut lsn = Lsn::default();
-        lsn.lsn = 1000;
         let mut stats: LsnStats = StatsLsnStats {
             replica: true,
-            lsn,
+            lsn: Lsn::from_i64(1000),
             offset_bytes: 1000,
             timestamp: TimestampTz::default(),
             fetched: SystemTime::now(),
@@ -336,9 +334,12 @@ mod test {
         assert_eq!(stats.eta_to(1000), Some(Duration::ZERO));
         assert_eq!(stats.eta_to(500), Some(Duration::ZERO));
 
-        // Pathological lag is clamped to a day, not overflowed.
+        // Pathological lag is clamped, not overflowed.
         stats.replay_lag_seconds = i64::MAX;
-        assert!(stats.eta_to(1500).unwrap().as_secs() <= 86_400);
+        assert_eq!(
+            stats.eta_to(1500).map(|d| d.as_secs()),
+            Some(MAX_REPLAY_LAG_SECONDS as u64)
+        );
 
         // Negative lag (clock wobble) floors at zero.
         stats.replay_lag_seconds = -5;

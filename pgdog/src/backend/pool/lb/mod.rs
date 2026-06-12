@@ -28,6 +28,10 @@ use ban::Ban;
 use monitor::*;
 pub use target_health::*;
 
+/// A real catch-up estimate is floored at 1s; `0` is reserved for "not
+/// estimable", which tells the client to fall back to its own default backoff.
+const MIN_ETA_SECONDS: i64 = 1;
+
 #[cfg(test)]
 mod test;
 
@@ -361,10 +365,9 @@ impl LoadBalancer {
         }
 
         // Read-your-writes floor: keep only replicas that have replayed at least
-        // `min_lsn`. Replay LSN is monotonic and the cached value is <= actual, so
-        // this never serves a stale read. If none qualify the read errors with
-        // `NoReplicaCaughtUp` (the client retries) unless `min_lsn_primary_fallback`
-        // is set, in which case it falls back to the primary.
+        // `min_lsn` (replay LSN is monotonic and the cached value is <= actual, so
+        // this never serves a stale read). If none qualify, fall back to the
+        // primary when `min_lsn_primary_fallback` is set, else error with an ETA.
         if let Some(min_lsn) = request.min_lsn {
             let caught_up: Vec<&Target> = candidates
                 .iter()
@@ -375,25 +378,22 @@ impl LoadBalancer {
                 })
                 .collect();
 
-            let fallback = self
-                .min_lsn_primary_fallback
-                .then(|| self.primary_target())
-                .flatten();
-
             if !caught_up.is_empty() {
                 candidates = caught_up;
-            } else if let Some(primary) = fallback {
+            } else if let Some(primary) = self
+                .min_lsn_primary_fallback
+                .then(|| self.primary_target())
+                .flatten()
+            {
                 candidates = vec![primary];
             } else {
-                // Estimate when the soonest replica will reach the floor, from
-                // its replication lag in time, so the client can size its defer
-                // to the real deficit. `0` = not estimable (no valid LSN stats
-                // yet); the client falls back to its own default backoff.
+                // ETA until the soonest replica reaches the floor, so the client
+                // can size its defer; `0` = not estimable (no valid LSN stats).
                 let eta_seconds = candidates
                     .iter()
                     .filter_map(|target| target.pool.lsn_stats().eta_to(min_lsn))
                     .min()
-                    .map(|eta| (eta.as_secs_f64().ceil() as i64).max(1))
+                    .map(|eta| (eta.as_secs() as i64).max(MIN_ETA_SECONDS))
                     .unwrap_or(0);
                 return Err(Error::NoReplicaCaughtUp { eta_seconds });
             }

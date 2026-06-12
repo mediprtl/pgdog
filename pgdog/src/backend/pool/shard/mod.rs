@@ -12,7 +12,7 @@ use crate::backend::PubSubListener;
 use crate::backend::Schema;
 use crate::backend::databases::User;
 use crate::backend::pool::lb::ban::Ban;
-use crate::config::{LoadBalancingStrategy, ReadWriteSplit, Role};
+use crate::config::{LoadBalancingStrategy, ReadWriteSplit, Role, config};
 use crate::net::messages::FrontendPid;
 use crate::net::{NotificationResponse, Parameters};
 
@@ -324,10 +324,7 @@ impl ShardInner {
             pub_sub_enabled,
         } = shard;
         let primary = primary.as_ref().map(Pool::new);
-        let min_lsn_primary_fallback = crate::config::config()
-            .config
-            .general
-            .min_lsn_primary_fallback;
+        let min_lsn_primary_fallback = config().config.general.min_lsn_primary_fallback;
         let lb = LoadBalancer::new(&primary, replicas, lb_strategy, rw_split)
             .with_min_lsn_primary_fallback(min_lsn_primary_fallback);
         let comms = Arc::new(ShardComms {

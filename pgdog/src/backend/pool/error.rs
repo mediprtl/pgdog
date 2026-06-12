@@ -77,12 +77,10 @@ pub enum Error {
     #[error("replica lag")]
     ReplicaLag,
 
-    // `eta_seconds` is the estimated time for the soonest replica to replay up
-    // to the requested min_lsn (gap / measured apply rate), so the client can
-    // size its read-your-writes defer to the real deficit instead of a fixed
-    // backoff. `0` means "not estimable yet" (no apply-rate sample, or stalled)
-    // and the client should fall back to its own default. The message prefix is
-    // matched by clients (and the glow relation_writer gate); keep it stable.
+    // `eta_seconds`: how long until the soonest replica reaches `min_lsn`,
+    // derived from its replication lag in time; `0` means not estimable. Clients
+    // size their read-your-writes defer from it. The message text is part of the
+    // wire contract (clients match on it), so keep it stable.
     #[error("no replica caught up to the requested min_lsn (eta ~{eta_seconds}s)")]
     NoReplicaCaughtUp { eta_seconds: i64 },
 }
@@ -107,6 +105,10 @@ impl Error {
                 | Self::UntrackedConnCheckin(_)
                 // Deliberate shutdown.
                 | Self::FastShutdown
+                // Read-your-writes backpressure: no replica has reached the
+                // requested min_lsn. An immediate retry can't help; the client
+                // must wait out the reported ETA.
+                | Self::NoReplicaCaughtUp { .. }
         )
     }
 }
@@ -142,5 +144,6 @@ mod tests {
         assert!(!Error::PubSubDisabled.is_retryable());
         assert!(!Error::FastShutdown.is_retryable());
         assert!(!Error::NoShard(0).is_retryable());
+        assert!(!Error::NoReplicaCaughtUp { eta_seconds: 5 }.is_retryable());
     }
 }
